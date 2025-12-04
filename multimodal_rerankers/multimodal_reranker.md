@@ -1,8 +1,12 @@
-# **Building and evaluating Multimodal Rerankers**
+# Building and evaluating Multimodal Rerankers
 
 ## TLDR
 
-I trained a multimodal reranker based on Qwen 3 VL 2B that outperforms Jina Reranker M0. I optimized both its inference speed and model size, built a collection of datasets to evaluate multimodal rerankers, and experimented with applying RL to reranking (promising and worth trying, but still inconclusive).
+I trained a multimodal reranker based on Qwen 3 VL 2B that outperforms Jina Reranker M0, optimized both its inference speed and model size, built a collection of datasets to evaluate multimodal rerankers, and experimented with applying RL to reranking (promising and worth trying, but still inconclusive).
+
+* Code : https://github.com/UlrickBL/multimodal_reranker#
+* Models : https://huggingface.co/collections/UlrickBL/multimodal-reranker
+* Benchmarks : https://huggingface.co/collections/UlrickBL/vidore-benchmark-reranker-adapted
   
 ## **Multimodality in retrieval and the need for rerankers** 
 
@@ -103,11 +107,11 @@ It is strictly binary (an item is either relevant or not) and it stops counting 
 
 $$MRR = \frac{1}{|Q|} \sum_{i=1}^{|Q|} \frac{1}{rank_i}$$
 
-Where $rank_i$ is the position of the *first* relevant item for query $i$.
+Where $rank_i$ is the position of the *first* relevant item for query i.
 
 ### NDCG (Normalized Discounted Cumulative Gain)
 
-NDCG is the quality metric. It looks at the entire list (up to a cutoff $k$) and rewards the model for placing high-relevance items at the top.
+NDCG is the quality metric. It looks at the entire list (up to a cutoff k) and rewards the model for placing high-relevance items at the top.
 
 Unlike MRR, NDCG handles graded relevance (perfect match vs partial match) and accounts for multiple positives (which is the case of some benchmark of the collection).
 
@@ -119,8 +123,8 @@ $$NDCG@k = \frac{DCG@k}{IDCG@k}$$
 
 To truly understand the difference, let's look at a scenario where there is only one relevant document in the whole list (in Real MM Rag for example).
 
-* MRR decays linearly ($1/r$).
-* NDCG decays logarithmically ($1/\log_2(1+r)$).
+* MRR decays linearly (1/r).
+* NDCG decays logarithmically (1/log_2(1+r)).
 
 Here is how the scores drop as the relevant item slips down the ranking:
 
@@ -166,7 +170,7 @@ I modeled the problem as predicting the probability associated with the "Yes" lo
 Then the hidden state of the last token is taken wr the attention mask for padding cases and the logit Yes and No are sampled from the output of the LM head.
 
 The scalar output of the model is :
-$$ \sigma(logit_yes - logit_no) $$
+$$ \sigma(logit_{yes} - logit_{no}) $$
 
 Since this is modeled as a binary classification problem, and because the model already produces a probability through the sigmoid, the loss used is simply binary cross entropy.
 
@@ -285,11 +289,11 @@ Indeed, Qwen 3 VL has **2 127 532 032** parameters, the hidden dimension is 2048
 
 In Jina setting, the MLP has 2 layers, one with shape (hidden_dim,hidden_dim) and another that project the logit with shape (hidden_dim,1). The hidden dim of Qwen 2 VL 2B is 1536 and the same vocab size. So the LM was previously 1536 *151936  = **233 373 696** and is now 1536 *1536  + 1536 * 1 = **2 360 832** parameters.
 
-Using the logits allows a better memory / size reduction in addition to have a pretrained layer instead of a fully initialized one.
-
-It also improve the inference speed : ADD FIGURES
+Using the logits allows a better memory / FLOPs / size reduction in addition to have a pretrained layer instead of a fully initialized one. Be aware that it is not necessary a memory optimization since some models are using tie embedding meaning the embedding layer and the lm_head share the same memory (but it is still a reduction of "effective parameters" - related to number of operations, but not necessary "memory parameters").
 
 In the end, with full optimization, for the same dataset, with a batch size of 25 pairs and 50 examples on a A100 40GB SXM4, UlrickBL/Qwen3RerankerMM-2B performs it in **1m41s** and Jina Reranker m0 in **2m12s** improving not negligably the inference time in addition to the overall performance and memory consumtion.
+
+This methodology could be used for any classification task (like scalar reward modeling, intent classification, Judge, ...), I will speak about it in another blog.
 
 ## Reinforcement learning strategy and reranking environments
 
@@ -339,7 +343,7 @@ This approach also has clear limitations:
 Yet you can find the model here : UlrickBL/MultimodalQwen3LastRL-2B
 And the training dataset here : UlrickBL/mm_reranker_rl_training
 
-## RL for multimodality**
+## RL for multimodality
 
 To test this RL strategy, I used the GRPO trainer of the verifiers library that I had to adapt to vision model (especially with the pixel value trick and so on). You can find the implementation and PR here : https://github.com/PrimeIntellect-ai/verifiers/pull/409
 
