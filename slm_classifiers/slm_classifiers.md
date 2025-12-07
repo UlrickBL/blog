@@ -2,85 +2,93 @@
 
 ## TLDR
 
+- Comparing different multiclass classification techniques with SLM, embedding (causal and bidirectional) and rerankers.
+- Presenting a technique to do multiclass classification with SLM and Lora in a single forward pass that beats other techniques and avoid overfitting
+- Benchmark very small language models
+- Explaining how we can reduce effective parameters in this technique, how it avoids overfiting
+- Some explanation of tied embeddings
+
 ## Motivations
 
-When training a multimodal reranker, I modeled it as a binary classification problem with a transformer backbone. 
+When training a multimodal reranker, I modeled it as a binary classification problem with a transformer backbone.
 
-Because of the multimodal aspect and the very poor performance of encoder only models compared to decoder only (even for embeddings, see Colpali) in mutlimodal embeddings and representations - mainly because of the discreptencies between training of both type of models and because of the real multimodality in the input being treated almost only in VLMs - I was "forced" to use Causal model for this classification task.
+Because of the multimodal aspect and the very poor performance of encoder-only models compared to decoder-only models in multimodal embeddings and representations (even for embeddings, as shown in Colpali), I was effectively forced to use a causal model for this classification task. This limitation mainly comes from the discrepancy between how both types of models are trained and from the fact that real multimodality in the input is handled almost exclusively in VLMs.
 
-However, an interesting point I realized is that training only the core representation model - so only the linear layers of attention and FFN and not the embedding and LM head layer - performed the best on test sets and benchmarks after training (meaning better performance and less overfitting). Also using the LM head (and extracting logits - but I will focus on that later) worked better than plugging and training a specific MLP as an output to the last token embedding.
+However, an interesting point I noticed is that training only the core representation model, meaning only the linear layers of attention and FFN while keeping both the embedding layer and the LM head frozen, produced the best results on test sets and benchmarks after training. This setup yielded better performance and less overfitting. Using the LM head and extracting logits also performed better than adding and training a dedicated MLP on top of the last token embedding.
 
-This can be explained because instead of tuning the last layer on a specific dataset and forcing it to fit the - most of the time - small number of example. By using the pre trained LM head for logits yes and no present several advantages :
-- We can leverage the instruction following and in context learning capabilities of language model by explaining the classification task and expressing the meaning of the classes. Instead of letting the model understand it through backpropagation and "waste" some compute and training example to make it figure out the task and then improve at the task, we can directly start at the becoming good at the task.
-- Since we are training and modifying only the core model and not the first layer (embedding layer) and last layer (frozen lm head instead of fully trained MLP, now most of the time tied to the embedding - see section of this blog on tie embeddings) the train model is more robust to overfiting and better in OOD examples of the same task (+ LoRa already reduces overfitting in the core model). We can see it as : we are not modifying the "decision" but only the "represention" (like intermediate vectors / embedding) that are used for the "decision" (the final classification).
+This can be explained by the fact that, instead of tuning the last layer on a specific dataset and forcing it to fit the usually small number of examples, using the pretrained LM head for yes and no logits has several advantages:
 
-This was true for the binary classification task and multimodal - which may be a niche in the industry. But is it true for more complete task (multiclass classification) in the text only area, where embeddings and encoder only models are really good and mainly used in classification tasks (intent classification, NER, ...) plugged to an MLP ?
+- We can leverage the instruction-following and in-context learning capabilities of the language model by explaining the classification task and explicitly describing the meaning of the classes. Instead of relying on backpropagation to make the model infer the task and then improve at it, we can directly start at the point where the model already understands the task.
 
-I decided to run several ablations on this subjects to compare methods for multiclass text classification to the single forward pass architecture I used for the reranker.
+- Since we train and modify only the core model, and neither the first layer (embedding layer) nor the last layer (frozen LM head, which is now often tied to the embeddings; see the section of this blog on tied embeddings), the trained model becomes more robust to overfitting and performs better on out-of-distribution examples of the same task. LoRa also reduces overfitting inside the core model. We can view this as modifying the representation rather than the decision: we adjust the intermediate vectors or embeddings that feed the final classification, but we avoid modifying the classification layer itself.
+
+This behavior held for the multimodal binary classification task, which may be a niche use case in the industry. But is it also true for more general tasks, such as multiclass classification in the text-only setting, where embeddings and encoder-only models perform very well and are widely used for tasks like intent classification or NER with an MLP on top?
+
+To investigate this, I ran several ablations comparing different methods for multiclass text classification to the single-forward-pass architecture I used for the reranker.
 
 ## Classifications strategies
 
-I will first describe the different techniques that are mainly used when you want to perform text classification (binary or multiclass).
+I will first describe the main techniques used for text classification tasks, whether binary or multiclass.
 
 ### Embedding + MLP
 
-The main technique used for classification tasks (intent classification, NLU, NER, emotion classification, ...) is to plug a text embedder to a decision maker, so most of the time, a transformer encoder represent the text input into a rich vector and then an MLP extract the classes with a final softmax or sigmoid activation depending on the task. It was mainly done with biderectional encoders (derivated from BERT) that are pretrained on Mask Language Modeling and postrained on sentence representations through pooling and constrative learning (like multilingual-e5 or gte-embedding).
+The most common technique for classification tasks (intent classification, NLU, NER, sentiment analysis, and others) is to connect a text embedder to a decision layer. Typically, a transformer encoder processes the text input into a rich vector representation, then an MLP predicts the classes with a final softmax or sigmoid activation depending on the task. This approach was initially dominated by bidirectional encoders derived from BERT, pretrained with Masked Language Modeling and then posttrained for sentence representations using pooling and contrastive learning methods such as multilingual-e5 or gte-embedding.
 
 ![alt text](bi_embedding_mlp_classifier.png)
 
-After that, encoder only models where also given the "instruction" capabilities, meaning you can explain deeper your task to the model so the embeddings are a bit more adapted to what you want to do (for example you could explain the classification task or the retrieval task and say that you give the query or the document, see Jina's embedding v4 where they even train a LoRa per task ADD LINK or multilingual-e5-instruct).
+Later, encoder-only models were also given instruction-following capabilities. This makes the embeddings more aligned with the downstream task, because you can describe the task to the model in natural language (for example, explaining the classification task or the retrieval task and specifying whether the input is the query or the document). This is used in models like multilingual-e5-instruct or Jina Embeddings v4, where they even train a LoRa per task.
 
-Nowadays, embedding can also be decoder / causal embeddings when SLMs are postrained following constrative learning recipe. This is the case of qwen3-embedding-0.6B which transforms qwen3-0.6B into an embedder - leveraging instruction - by applying the gte embedding constrative learning recipe. Those are the best embedders in most of the tasks according to the MTEB leaderboard (ADD LINK) - this is actually the closest technique to what I present in this blog except you need a fully trained MLP.
+More recently, embeddings can also come from decoder or causal models when small language models are posttrained using contrastive learning recipes. This is the case for qwen3-embedding-0.6B, which transforms qwen3-0.6B into an instruction-aware embedder by applying the gte recipe for contrastive posttraining. These models currently achieve top results on many tasks on the MTEB leaderboard and represent the closest technique to the one I explore in this blog, except that they still require a fully trained MLP for classification.
 
 ![alt text](causal_embedding_mlp_classifier.png)
 
 ### Semantic similarity
 
-Most of the embedders / encoders are trained for similarity tasks (because of the focus on retrieval task in benchmark, use cases and training). So you can leverage those model as bi-encoders where you encode the input and the description of all classes separatly and create a score using cosine distance. You can precompute the classes vectors at inference time and apply a softmax to the scores to get a probability.
+Most embedders and encoders are trained for similarity tasks due to the emphasis on retrieval tasks in benchmarks, use cases, and training pipelines. This enables the use of the model as a bi-encoder: the input text and the class descriptions are encoded separately, and a score is computed using cosine similarity. Class vectors can be precomputed at inference time, and a softmax applied over the similarity scores yields a probability distribution.
 
 ![alt text](embedding_similarity_classifier.png)
 
 ### Reranker / Natural language inference pairs
 
-Another technique used in NLP is called Natural Language Inference and is really close to reranking tasks (see for example the paper : Political DEBATE: Efficient Zero-shot and Few-shot Classifiers for Political Text). The concept of NLI is almost as the Next Sentence Prediction of the original training of BERT. You present a text and a description of class and the model classifies the relevancy between the 2 subjects. So you can use text reranker in this setup, such as qwen reranker.
+Another technique used in NLP is Natural Language Inference, which is closely related to reranking tasks. An example is the paper "Political DEBATE: Efficient Zero-shot and Few-shot Classifiers for Political Text". The concept behind NLI resembles the Next Sentence Prediction (NSP) objective used in the original BERT training. You present the model with a text and a class description, and it classifies how relevant or entailed the relationship is between the two. This allows the use of text rerankers for classification, such as qwen reranker.
 
 ![alt text](reranker_pairs_classifier.png)
 
-The only issue is that on the opposite of all the previous techniques where you need a single forward pass to classify at inference time, NLI and rerankers work as cross-encoders meaning you cannot precompute anything. You need to perform each pairs of input / class for every input. In multiclassification problems, it can become very expensive (you multiply your compute budget by the number of classes).
+The main drawback is that unlike the previous techniques, which require only a single forward pass per input at inference time, NLI-based models and rerankers function as cross-encoders. This means nothing can be precomputed: for every input, the model must process a pair consisting of the input text and each candidate class. In multiclass classification, this becomes extremely expensive, as the compute cost grows linearly with the number of classes.
 
-Even if cross encoding is robust (that's why rerankers are use as a final layer before generation in RAGs), it makes it unrealistic for fast classification tasks - even more on CPUs.
+Even though cross-encoders are robust, which is why rerankers are used as the final layer before generation in RAG systems, their computational cost makes them impractical for fast classification tasks, especially on CPUs.
 
 ### Naive LLM classification + parsing
 
-Now, we will start speaking about LLMs. When people want to classify using LLMs, I used to become irritated. Why would you use big models to just get a single class which is a sinple score. You need to let the model do all its generation / autoregressive process, beg him to return your class name in between some irrelevant tokens, try some regex or fuzzy match to find your class tokenS inside the completion and you can barely have a real probability of it.
+Now we can start discussing LLMs. When people try to use large language models for classification, I used to get irritated. Why use a large model just to obtain a single class, which is essentially a simple score? You have to let the model run its full autoregressive generation process, persuade it to output the class name somewhere inside irrelevant tokens, then rely on regex or fuzzy matching to extract the class tokens from the completion. Even then, it is difficult to obtain a meaningful probability score for the prediction.
 
 ### SLM last token hidden state + MLP
 
-A more clever way to do this task is to use a single forward pass to get the last token hidden state (just like it is done in qwen embeddings) and plug it to a fully trained MLP. There, you can fine tune the model and it is not an autoregressive task.
+A more reasonable approach is to use a single forward pass to extract the last token hidden state (last token pooling), similar to how qwen embeddings are computed, and feed it into a fully trained MLP. This allows proper fine tuning and avoids the autoregressive generation process.
 
 ![alt text](slm_mlp_classifier.png)
 
 ### SLM single forward pass
 
-Finally what I saw worked the best in the binary classification problem + multimodal task was to use a Small Language Model (the size of the encoder only), perform a single forward pass and extract the logits of the class tokens from the LM head. There, you can instruct the model with the task and ask him (+ train him) to answer directly with the class token. If you do a softmax with only the X logits representing your X classes (and present in the prompt), you have access to real probabilities of the classes.
+The method that performed best in my multimodal binary classification experiments was to use a Small Language Model similar in size to encoder-only models, perform a single forward pass, and extract the logits of the class tokens directly from the LM head. In this setup, you can instruct the model with the task and train it to answer using the exact class token. If you apply a softmax only over the logits corresponding to the X class tokens present in the prompt, you obtain real class probabilities.
 
-One constraint is that you need to find a way to present your class with DISTINCT first logit. 
+The only constraint is that your class tokens must have distinct first logits so they are cleanly separable.
 
-A variant is to use proxy to your classes by giving correspondances (to letters A,B,C,D, ...) in the instruction and use those proxy logits as classes.
+A variant is to use proxy tokens for the classes by assigning them letters such as A, B, C, D in the instruction, then using the logits of those proxy tokens as the classification outputs.
 
 ![alt text](slm_sliced_head_classifier.png)
 
-With that, you can leverage strong training of Causal models (multilingual, knowledge, huge pretraining, post training and RL on task), intruction following abilities (you can skip the adaptation to the task because you explain the task in the prompt and go directly to model improvment) and it costs a single forward pass and provides you real probability of classes.
+With this approach, you leverage the strong training of causal models in multilingual settings, knowledge acquisition, large-scale pretraining, posttraining, and RL on instructions. You also take advantage of their instruction-following abilities, allowing you to bypass the initial adaptation step by explaining the task directly in the prompt and focusing entirely on improving at the task. All of this is achieved with a single forward pass while still providing real class probabilities.
 
 ## Training Setup
 
 ### Datasets
 
-To evaluate those assumptions and compare multiclass classification strategies in a relevant way, I used 2 datasets :
+To evaluate these assumptions and compare multiclass classification strategies in a meaningful way, I used two datasets and tasks.
 
 #### German Intent classification : DFKI/radr_intents
 
-I first used DFKI/radr_intents an intent classification dataset in German with 2610 examples in the train set, 310 in the validation set and 605 in the test set. 
+I first used DFKI/radr_intents, an intent classification dataset in German with 2610 training examples, 310 validation examples, and 605 test examples.
 
 Task is classification with 8 classes : call, call_response, info_request, info_provide, confirm, disconfirm, order and other with the following repartition :
 
@@ -128,13 +136,13 @@ When working with an instruct encoder I used the following instruction :
     - other — anything not fitting the above.
     - confirm — acknowledge, agree, confirm understanding."""
 
-You would notice that I modified a bit the classes name so I am sure to have distinct first tokens for each classes.
+You may notice that I slightly modified the class names to ensure that each class has a distinct first token.
 
-This small datasets would help me to evaluate the different methodologies in a complex and multilingual setup (the prompt and classes being in english and the input in german).
+This small dataset helps evaluate the different methods in a multilingual and somewhat complex setup, where the prompt and class descriptions are in English while the input text is in German.
 
 #### English emotion classification : DFKI/radr_intents
 
-I then used dair-ai/emotion, an English emotion classification dataset with 6 classes : sadness, joy, love, anger, fear and surprise. The dataset contains 16k examples in training, 2k in validation and 2k in test.
+I then used dair-ai/emotion, an English emotion classification dataset with six classes: sadness, joy, love, anger, fear, and surprise. The dataset contains 16k training examples, 2k validation examples, and 2k test examples.
 
 I used this prompt for SLM classification instruction :
 
@@ -175,11 +183,11 @@ Regarding models, to have the most fair evaluation I picked :
 - Qwen/Qwen3-Embedding-0.6B for the Causal Instruct embedding
 - intfloat/multilingual-e5-large-instruct for the Bidirectional encoder instruct embedding
 
-Those choices where made to be the most fair. First, Qwen3 0.6B and Qwen3 Embedding 0.6B share the same architecture, pre training and size (embedding is derived from instruct as explained). E5 is also a 0.6B parameters embedding that can work with instruction and that has the best performances in its parameters range (as an encoder only) in MTEB and is positionned just after Qwen Embedding :
+These choices were made to keep the comparison fair. Qwen3-0.6B and Qwen3-Embedding-0.6B share the same architecture, pretraining, and parameter count, with the embedding model derived from the instruct version as explained earlier. E5 is also a 0.6B parameter embedder that supports instructions and achieves the best performance in its parameter range among encoder-only models according to MTEB, positioned just after Qwen Embedding:
 
 ![alt text](mteb.png)
 
-When needing an MLP, it was always directly plugged to the sentence embedding (so mean pooling or last pooling) with a Linear layer of dimension (embedding_dim, embedding_dim), a ReLu activation and the final projection layer, a Linear of dimension (embedding_dim,classes). Final logits where always transformed to a probability with a softmax.
+Whenever an MLP was required, it was always plugged directly into the sentence embedding (using mean pooling or last-token pooling). The MLP consisted of a Linear layer of shape (embedding_dim, embedding_dim), a ReLU activation, and a final projection layer of shape (embedding_dim, classes). Final logits were always converted to probabilities using a softmax.
 
     self.score_head = nn.Sequential(
                 nn.Linear(hidden_size, hidden_size),
@@ -189,19 +197,19 @@ When needing an MLP, it was always directly plugged to the sentence embedding (s
 
 ### Hyperparameters and LoRa
 
-All training where done with a LoRa of rank 16, alpha 32 and dropout 0.05 applied to all linar layers of the attention and FFN. MLP where always fully trained and LM heads and embedding always frozen.
+All training runs used a LoRa with rank 16, alpha 32, and dropout 0.05, applied to all linear layers in the attention blocks and the FFN. The MLP was always fully trained, while LM heads and embedding layers were always frozen.
 
-The loss used is the cross entropy loss. To not favor any training optimizer used was AdamW with beta1 0.9, beta2 0.999, epsilon of 1e-8 and a linear decay learning rate setup to 5e-5.
+The loss function was cross entropy. To avoid favoring any setup, the optimizer was AdamW with beta1 set to 0.9, beta2 to 0.999, epsilon to 1e−8, and a linear decay learning rate schedule starting at 5e−5.
 
-Batch size is set to 8 with no gradient accumulation.
+The batch size was 8 with no gradient accumulation.
 
-Target metric is macro F1 score but weighted F1 score is also followed during training.
+The target metric was macro F1 score, although weighted F1 score was also monitored during training.
 
 ## Results
 
-I first compared all the techniques that could achieve globaly the same inference speed with this setup on the German dataset.
+I first compared all techniques that could achieve approximately the same inference speed within this setup on the German dataset.
 
-Here is the description of the different setup you can find in the table :
+Here is the description of the different configurations found in the table:
 
 - SLMLogitsClassifier : Qwen 3 0.6B with prompt and LM head logit based classification - logits are first token of each class name
 - SLMLetterClassifier : Qwen 3 0.6B with prompt and LM head logit based classification - logits are letters mapped in the prompt as the class name
@@ -223,7 +231,7 @@ Here is the description of the different setup you can find in the table :
 
 This training was done on 3 epochs while keeping the best validation performance to test on the test set.
 
-I then compared the best working techniques (SLMLogitsClassifier, CausalEmbeddingInstructClassifier and BidirectionalEncoderClassifier as a baseline for what is done the most nowadays) on more data with the emotion classification task :
+I then compared the best performing techniques (SLMLogitsClassifier, CausalEmbeddingInstructClassifier, and BidirectionalEncoderClassifier as a baseline for what is most commonly used today) on a larger dataset with the emotion classification task.
 
 | Model | Test Macro F1 | Test Weighted F1 | Peak Training Macro F1 (on val) | Peak Training Weighted F1 (on val) |
 |-------|---------------|------------------|-------------------------|----------------------------|
@@ -231,32 +239,35 @@ I then compared the best working techniques (SLMLogitsClassifier, CausalEmbeddin
 | **CausalEmbeddingInstructClassifier** | *0.87876* | *0.91969* | **0.91** | **0.936** |
 | **BidirectionalEncoderInstructClassifier** | 0.85633 | 0.90050 | 0.899 | 0.924 |
 
-We can make several observations :
+We can make several observations:
 
-- Overall, on both benchmarks, the SLM Logit based (with the LM Head) performs the best on the validation set.
-- Using an Instruct embedding with an SLM as a base model seems better for classification in both tasks mainly because pre training and instruction following is way more covered than encoder only. However, we loose the bidirectional aspect that could be very interesting to keep or regain for some tasks / inputs. Llama nemoretriever colembedd by nvidia present a way to reactivate bi-directional ie removing causal mask on a causal embedding with training, see : https://arxiv.org/pdf/2507.05513.
-- We observe a more stable relationship between validation and training set when we use the LM head instead of an MLP, showing changing only the "representation" and not the "decision" leads to less overfit and a more robust and stable performance on unseen / untuned inputs (which is what I saw when training the multimodal reranker).
+-  On both benchmarks, the SLM logit-based method using the LM head performs the best on the validation set and outperforms other techniques.
+
+- Using a causal instruct embedding built from an SLM as the base model appears superior for classification across both tasks, mainly because pretraining and instruction-following are far more developed for causal models than for encoder-only models. However, this approach loses the bidirectional property, which can be useful or even crucial for some tasks or inputs. Llama nemoretriever colembed by NVIDIA shows a method to restore bidirectionality by removing the causal mask in a causal embedding model and retraining it. See https://arxiv.org/pdf/2507.05513.
+
+- We observe a more stable relationship between validation and training performance when using the LM head instead of an MLP. This supports the idea that modifying only the representation and not the decision layer reduces overfitting and yields more robust performance on unseen or untuned inputs, which is consistent with what I observed when training the multimodal reranker.
 
 ### Very small language models
 
-I also choose the english dataset because I wanted to test even smaller models. There are very few SLM that are actually *small* to match encoder only parameters (and meaning that you can afford to wait a single forward pass on a CPU with a correct time). I tested HuggingFaceTB/SmolLM2-360M-Instruct and ibm-granite/granite-4.0-350M. Moreover, Pleias AI did a great job achieving almost the same results on MMLU with Qwen 0.6B with the model Baguetotron (321M) and impressive results with Monad (56M). Those model enderwent a single mode of training on the SYNTH dataset and were not targeted on the instruction following (mainly knowledge retrieval and creativity according to the blog). I still wanted to try it. 
+I also chose the English dataset because I wanted to test even smaller models. There are very few SLMs that are truly small enough to match encoder-only parameter sizes, which is important when you need inference via a single forward pass on CPU within a reasonable latency. I evaluated HuggingFaceTB/SmolLM2-360M-Instruct and ibm-granite/granite-4.0-350M. Additionally, Pleias AI achieved impressive results close to Qwen 0.6B on MMLU with Baguetotron (321M) and even more surprising performance with Monad (56M). These 2 last models underwent a single mode of training (no pretraining, mid training, post training paradigm, just training) on the SYNTH dataset and were not explicitly optimized for instruction following (mostly knowledge retrieval and creativity according to their blog). I still wanted to test them.
 
 | Model | Test Macro F1 | Test Weighted F1 |
 |-------|---------------|------------------|
 | **Baguetotron (3 epochs - 360M)** | 0.83096 | 0.88265 |
 | **SmollLM2-instruct (3 epochs - 321M)** | 0.875 | 0.924 |
+| **Granite (3 epochs - 350M)** | 0.76 | 0.77 |
 | **Monad (5 epochs - 56M)** | 0.72865 | 0.86547 |
 | **E5 small (3 epochs - 100M encoder only with MLP)** | 0.8646 | 0.9082 |
 
-SmollLM 2 Instruct achieve almost the same results as the SLMLogitsClassifier (that plateaued and overfited) showing that with more epochs we can achieve top performances with this technique with very small langage models (after 1 epochs, results where 0.86 for the Macro and 0.89 for the weighted so epochs are needed but learning curve is good).
+SmolLM2 Instruct reached almost the same results as the SLMLogitsClassifier, which plateaued and overfitted. This shows that with more epochs this technique can reach top performance even with very small language models. After one epoch, SmolLM2 achieved a macro F1 of 0.86 and a weighted F1 of 0.89, so more epochs are clearly needed, but the learning curve is promising.
 
-Unfortunatly, probably due to the lack of instruction following, results are not as good as embedding + MLP of the size range for the Pleias models. Yet with instruction tuning and RL on the base model, it could be interesting to see how result can match 0.6B models on classification tasks, mostly for the 56M that is very small. I saw some DPO work on the 300M on twitter that seem very intersting (recall no RL was done on the model for now).
+Unfortunately, likely due to the lack of instruction tuning, the Pleias models do not match the performance of embedding plus MLP models of similar size. However, with proper instruction tuning and RL on the base model, it would be interesting to see whether they could approach the performance of 0.6B models on classification tasks, especially for the 56M model, which is extremely small (recall that no RL has been applied to these models yet). I saw recent DPO work on the 300M model on X that looks promising.
 
 ## Optimization and tie embeddings
 
-One could say that using the LM head is overkill because it is one of the biggest components of the SLM in term of parameters. Yet as explained, since we only need X classes, we only use X logits from the token vocabulary of the LLM. Therefore, we can reduce a lot the size of the model. Actually with tied embeddings, it is more a reduction of effective size rather than memory size.
+One could argue that using the LM head is overkill because it is one of the largest components of an SLM in terms of parameters. However, as explained earlier, since we only need X classes, we only use the X logits corresponding to those class tokens in the vocabulary. This means the effective size of the model can be reduced significantly. With tied embeddings, this is more a reduction of effective parameters rather than memory parameters.
 
-I will reuse a bit of the explanation I did in my multimodal reranker blog (ADD LINK) and adapt it to this one.
+I will reuse part of the explanation from my multimodal reranker blog (https://huggingface.co/blog/UlrickBL/building-and-evaluating-multimodal-rerankers) and adapt it to this context.
 
 Using the complete logit outputed by the LM head is(since we don't sample token with softmax, temperature and so on) and slicing the 2 token that we care about like that :
 
@@ -274,12 +285,14 @@ When applying an MLP with 2 layers of shape (hidden_dim,hidden_dim) and  (hidden
 
 Using the logits allows a better memory / FLOPs / size reduction in addition to have a pretrained layer instead of a fully initialized one. Be aware that it is not necessary a memory optimization since some models are using tied embedding meaning the embedding layer and the lm_head share the same memory (but it is still a reduction of "effective parameters" - related to number of operations, but not necessary "memory parameters").
 
-Tie memory are presented as following :
+Tied embeddings operate as follows:
 
 ![alt text](tie_embeddings.png)
 
-Nowadays, most of the models use tie embeddings. It reduces the number of parameters but also prevent overfitting for models like transformers that are very deep since the input and output of your model (embedding and LM head) share the same parameters. This is an additive reason to use frozen LM head as the classifier instead of a decoupled MLP.
+Most modern models use tied embeddings. This reduces parameter count and also helps prevent overfitting, especially in very deep transformer architectures, because the input and output layers of the model (embedding and LM head) share the same parameters and so the same constraints. For example, if you print the model structure, you will see an LM head, but if you inspect the parameter list and layer names, you will not find a separate LM head matrix. This is an additional reason to prefer using a frozen LM head as the classifier instead of attaching a separate MLP.
 
-Moreover, even if it does not reduces the number of parameters in the VRAM, it does not need to load in the SMs the complete LM head when doing the end of the single forward pass, reducing inference cost in addition to reducing FLOPs.
+Furthermore, even though this does not decrease the number of parameters held in VRAM (in the case of tied embeddings only, for example last Mistral Models do not use this technique but Qwen and Phi do), it avoids loading the full LM head into the SMs during the final step of the forward pass, which reduces inference cost and also lowers FLOPs.
 
-It also improve training since backpropagation is not calculated for the complete vocabulary but only for the X tokens of the classes.
+![alt text](gpu_memory_layers.png)
+
+It also improves training efficiency because backpropagation is computed only for the X class token logits, rather than across the entire vocabulary.
