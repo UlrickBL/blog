@@ -1,4 +1,4 @@
-# SLM are inference and performance optimized classifiers with a single forward pass
+# From Speed to Stability: How SLMs can be adapted to deliver efficient, instruction-aligned classification in a single forward pass
 
 ## TLDR
 
