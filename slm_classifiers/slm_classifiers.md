@@ -1,4 +1,4 @@
-# From Speed to Stability: How SLMs can be adapted to deliver efficient, instruction-aligned classification in a single forward pass
+# From Speed to Stability: How SLMs can be adapted to deliver efficient, robust and instruction-aligned classification in a single forward pass
 
 ## TLDR
 
