@@ -1,12 +1,20 @@
-# From Speed to Stability: How SLMs can be adapted to deliver efficient, robust and instruction-aligned classification in a single forward pass
+# SLMLogitsClassifier: How SLMs can be adapted to deliver efficient, robust and instruction-aligned classification in a single forward pass
 
 ## TLDR
 
-- Comparing different multiclass classification techniques with SLM, embedding (causal and bidirectional) and rerankers.
-- Presenting a technique to do multiclass classification with SLM and Lora in a single forward pass that beats other techniques and avoid overfitting
-- Benchmark very small language models
-- Explaining how we can reduce effective parameters in this technique, how it avoids overfiting
-- Some explanation of tied embeddings
+- Comparison of different multiclass classification techniques using SLMs, causal and bidirectional embeddings, and rerankers
+
+- Presentation of a single forward pass multiclass classification method using SLMs and LoRa that outperforms other techniques and reduces overfitting
+
+- Benchmarking of very small language models
+
+- Explanation of how this technique reduces effective parameters and avoids overfitting
+
+- Additional discussion of tied embeddings
+
+Main code is available here : https://github.com/UlrickBL/slm_classifiers
+
+All experiments and training where done on a single A100 SXM4 40GB.
 
 ## Motivations
 
@@ -34,25 +42,26 @@ I will first describe the main techniques used for text classification tasks, wh
 
 The most common technique for classification tasks (intent classification, NLU, NER, sentiment analysis, and others) is to connect a text embedder to a decision layer. Typically, a transformer encoder processes the text input into a rich vector representation, then an MLP predicts the classes with a final softmax or sigmoid activation depending on the task. This approach was initially dominated by bidirectional encoders derived from BERT, pretrained with Masked Language Modeling and then posttrained for sentence representations using pooling and contrastive learning methods such as multilingual-e5 or gte-embedding.
 
-![alt text](bi_embedding_mlp_classifier.png)
+![bi_embedding_mlp_classifier](https://cdn-uploads.huggingface.co/production/uploads/66252d1725100e17022cc676/G46fESJakC-LqwL80k46u.png)
 
 Later, encoder-only models were also given instruction-following capabilities. This makes the embeddings more aligned with the downstream task, because you can describe the task to the model in natural language (for example, explaining the classification task or the retrieval task and specifying whether the input is the query or the document). This is used in models like multilingual-e5-instruct or Jina Embeddings v4, where they even train a LoRa per task.
 
 More recently, embeddings can also come from decoder or causal models when small language models are posttrained using contrastive learning recipes. This is the case for qwen3-embedding-0.6B, which transforms qwen3-0.6B into an instruction-aware embedder by applying the gte recipe for contrastive posttraining. These models currently achieve top results on many tasks on the MTEB leaderboard and represent the closest technique to the one I explore in this blog, except that they still require a fully trained MLP for classification.
 
-![alt text](causal_embedding_mlp_classifier.png)
+![causal_embedding_mlp_classifier](https://cdn-uploads.huggingface.co/production/uploads/66252d1725100e17022cc676/kIqGizSN_FM13h_u2lm6s.png)
 
 ### Semantic similarity
 
 Most embedders and encoders are trained for similarity tasks due to the emphasis on retrieval tasks in benchmarks, use cases, and training pipelines. This enables the use of the model as a bi-encoder: the input text and the class descriptions are encoded separately, and a score is computed using cosine similarity. Class vectors can be precomputed at inference time, and a softmax applied over the similarity scores yields a probability distribution.
 
-![alt text](embedding_similarity_classifier.png)
+
+![embedding_similarity_classifier](https://cdn-uploads.huggingface.co/production/uploads/66252d1725100e17022cc676/cm8jmEBqtb5tpP2FYu-5B.png)
 
 ### Reranker / Natural language inference pairs
 
 Another technique used in NLP is Natural Language Inference, which is closely related to reranking tasks. An example is the paper "Political DEBATE: Efficient Zero-shot and Few-shot Classifiers for Political Text". The concept behind NLI resembles the Next Sentence Prediction (NSP) objective used in the original BERT training. You present the model with a text and a class description, and it classifies how relevant or entailed the relationship is between the two. This allows the use of text rerankers for classification, such as qwen reranker.
 
-![alt text](reranker_pairs_classifier.png)
+![reranker_pairs_classifier](https://cdn-uploads.huggingface.co/production/uploads/66252d1725100e17022cc676/WvSaafLWlz-dudrmPKzu6.png)
 
 The main drawback is that unlike the previous techniques, which require only a single forward pass per input at inference time, NLI-based models and rerankers function as cross-encoders. This means nothing can be precomputed: for every input, the model must process a pair consisting of the input text and each candidate class. In multiclass classification, this becomes extremely expensive, as the compute cost grows linearly with the number of classes.
 
@@ -66,7 +75,7 @@ Now we can start discussing LLMs. When people try to use large language models f
 
 A more reasonable approach is to use a single forward pass to extract the last token hidden state (last token pooling), similar to how qwen embeddings are computed, and feed it into a fully trained MLP. This allows proper fine tuning and avoids the autoregressive generation process.
 
-![alt text](slm_mlp_classifier.png)
+![slm_mlp_classifier](https://cdn-uploads.huggingface.co/production/uploads/66252d1725100e17022cc676/NkMkqqoMIOH9fS_OMjYr1.png)
 
 ### SLM single forward pass
 
@@ -76,7 +85,7 @@ The only constraint is that your class tokens must have distinct first logits so
 
 A variant is to use proxy tokens for the classes by assigning them letters such as A, B, C, D in the instruction, then using the logits of those proxy tokens as the classification outputs.
 
-![alt text](slm_sliced_head_classifier.png)
+![slm_sliced_head_classifier](https://cdn-uploads.huggingface.co/production/uploads/66252d1725100e17022cc676/p-ht2NKDRQl2oCNk2tPcU.png)
 
 With this approach, you leverage the strong training of causal models in multilingual settings, knowledge acquisition, large-scale pretraining, posttraining, and RL on instructions. You also take advantage of their instruction-following abilities, allowing you to bypass the initial adaptation step by explaining the task directly in the prompt and focusing entirely on improving at the task. All of this is achieved with a single forward pass while still providing real class probabilities.
 
@@ -185,7 +194,7 @@ Regarding models, to have the most fair evaluation I picked :
 
 These choices were made to keep the comparison fair. Qwen3-0.6B and Qwen3-Embedding-0.6B share the same architecture, pretraining, and parameter count, with the embedding model derived from the instruct version as explained earlier. E5 is also a 0.6B parameter embedder that supports instructions and achieves the best performance in its parameter range among encoder-only models according to MTEB, positioned just after Qwen Embedding:
 
-![alt text](mteb.png)
+![mteb](https://cdn-uploads.huggingface.co/production/uploads/66252d1725100e17022cc676/G-nXl_tJCqeafUZgYNSTx.png)
 
 Whenever an MLP was required, it was always plugged directly into the sentence embedding (using mean pooling or last-token pooling). The MLP consisted of a Linear layer of shape (embedding_dim, embedding_dim), a ReLU activation, and a final projection layer of shape (embedding_dim, classes). Final logits were always converted to probabilities using a softmax.
 
@@ -199,7 +208,7 @@ Whenever an MLP was required, it was always plugged directly into the sentence e
 
 All training runs used a LoRa with rank 16, alpha 32, and dropout 0.05, applied to all linear layers in the attention blocks and the FFN. The MLP was always fully trained, while LM heads and embedding layers were always frozen.
 
-The loss function was cross entropy. To avoid favoring any setup, the optimizer was AdamW with beta1 set to 0.9, beta2 to 0.999, epsilon to 1e−8, and a linear decay learning rate schedule starting at 5e−5.
+The loss function was cross entropy. To avoid favoring any setup, the optimizer was AdamW with beta1 set to 0.9, beta2 to 0.999, epsilon to 1e-8, and a linear decay learning rate schedule starting at 5e-5.
 
 The batch size was 8 with no gradient accumulation.
 
@@ -287,12 +296,12 @@ Using the logits allows a better memory / FLOPs / size reduction in addition to 
 
 Tied embeddings operate as follows:
 
-![alt text](tie_embeddings.png)
+![tie_embeddings](https://cdn-uploads.huggingface.co/production/uploads/66252d1725100e17022cc676/SBjgiLHcMzNUThGFeT4H5.png)
 
 Most modern models use tied embeddings. This reduces parameter count and also helps prevent overfitting, especially in very deep transformer architectures, because the input and output layers of the model (embedding and LM head) share the same parameters and so the same constraints. For example, if you print the model structure, you will see an LM head, but if you inspect the parameter list and layer names, you will not find a separate LM head matrix. This is an additional reason to prefer using a frozen LM head as the classifier instead of attaching a separate MLP.
 
 Furthermore, even though this does not decrease the number of parameters held in VRAM (in the case of tied embeddings only, for example last Mistral Models do not use this technique but Qwen and Phi do), it avoids loading the full LM head into the SMs during the final step of the forward pass, which reduces inference cost and also lowers FLOPs.
 
-![alt text](gpu_memory_layers.png)
+![gpu_memory_layers](https://cdn-uploads.huggingface.co/production/uploads/66252d1725100e17022cc676/HaTNOiAOzsG5h6aP0iQGf.png)
 
 It also improves training efficiency because backpropagation is computed only for the X class token logits, rather than across the entire vocabulary.
