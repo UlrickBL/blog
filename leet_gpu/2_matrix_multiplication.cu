@@ -4,9 +4,9 @@ __global__ void matrix_multiplication_kernel(const float* A, const float* B, flo
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     if (row < M && col < K) {
-        float sum = 0; // better to use it if C is not initialized and to avoid accessing C too much
+        float sum = 0;
         for (int i = 0; i < N; i++) {
-            C[row * K + col] += A[row * N + i] * B[i * K + col];
+            sum += A[row * N + i] * B[i * K + col];
         }
         C[row * K + col] = sum;
     }
