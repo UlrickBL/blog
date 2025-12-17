@@ -19,5 +19,8 @@ int row = blockIdx.y * blockDim.y + threadIdx.y : y is for rows in cuda
 C[row * K + col] += A[row * N + i] * B[i * K + col] : always need to flatten indexes even in 2D
 float sum = 0 : better to use it if C is not initialized and to avoid accessing C too much
 
-# 2 : transpose matrix
+# 3 : transpose matrix
 /
+
+# 4 : vector add
+Be carefull between 1D launch and 2D or 3D launch, I should always prioritize 1D if I can I guess 
