@@ -24,3 +24,12 @@ float sum = 0 : better to use it if C is not initialized and to avoid accessing 
 
 # 4 : vector add
 Be carefull between 1D launch and 2D or 3D launch, I should always prioritize 1D if I can I guess 
+
+# 5 : color inversion
+Same logic as python for the maths
+
+# 6 : 1D convolution
+/
+
+# 7 : reverse array
+Need to be carefull with indexes
