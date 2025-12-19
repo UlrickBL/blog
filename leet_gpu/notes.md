@@ -33,3 +33,37 @@ Same logic as python for the maths
 
 # 7 : reverse array
 Need to be carefull with indexes
+
+# 8 : ReLu
+Be carefull with typing, it is not like python, compare floats with floats (so 0.0 not 0)
+
+# 9 : Leaky Relu
+/
+
+# 10 : Rainbow table
+/
+
+# 11 : Matrix copy
+Always go for 1D
+
+# 12 : model inference
+output.copy_ if allocated outside of a function
+
+# 13 : count array elements
+atomicAdd allows to modify an elements in each thread by adding the value. Other atomic operations :
+atomicAdd(addr, val);   // add
+atomicSub(addr, val);   // subtract
+atomicExch(addr, val);  // exchange (swap)
+atomicMin(addr, val);
+atomicMax(addr, val);
+
+# 14 : count 2D array elements
+/
+
+# 15 : SiLu
+- exp() should be used for double precision, although should be overloaded for single
+- expf() should be used for single precision (float)
+- __expf() is the fast-math version, the performance is faster with some loss of precision (dependent on the input value, see the guide for more details).
+
+# 16 : SwiGLU
+Not sure about their definition
