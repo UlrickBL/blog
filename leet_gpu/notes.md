@@ -67,3 +67,24 @@ atomicMax(addr, val);
 
 # 16 : SwiGLU
 Not sure about their definition
+
+# 17 : reduce
+cudaMemset(output, 0, sizeof(float)) : to initialize in memory if needed
+float* means pointers
+if we say in the function "const float*" we cannot modify it
+
+# 18 : Softmax
+atomicAdd work only for int, so I found something on forum that uses atomicCAS to do it 
+Had to separate in 3 kernels the calculus
+Be carefull with pointers (need to modify the memory) and value (use the value)
+cudaMalloc : to put a value in GPU memory
+cudaMemcpy
+cudaMemset
+& for adress
+
+# 18 : Softmax blockwise
+To optimize, each block has the thread values (256) in shared memory so the goal is to compute the max using this block wise
+
+__shared__ float sdata[256]; : shared memory
+__syncthreads() : make sure all threads are finished writing
+for (int s = blockDim.x / 2; s > 0; s >>= 1) : tree reduction
