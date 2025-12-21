@@ -88,3 +88,10 @@ To optimize, each block has the thread values (256) in shared memory so the goal
 __shared__ float sdata[256]; : shared memory
 __syncthreads() : make sure all threads are finished writing
 for (int s = blockDim.x / 2; s > 0; s >>= 1) : tree reduction
+
+# 19 : Attention
+Reuses previous kernels but had to ask help or Mr. GPT for the softmax cause I was lost
+
+Softmax optimized with tiling with one row per block + store the buffer in shared memory with extern __shared__ float buf[];
+for (int i = threadIdx.x; i < N; i += blockDim.x) : each thread take all the threshIdx.x and jump from bockDim.x
+The buffer contains all threads max and we need to take the max of all of them (reduction tree)
