@@ -95,3 +95,6 @@ Reuses previous kernels but had to ask help or Mr. GPT for the softmax cause I w
 Softmax optimized with tiling with one row per block + store the buffer in shared memory with extern __shared__ float buf[];
 for (int i = threadIdx.x; i < N; i += blockDim.x) : each thread take all the threshIdx.x and jump from bockDim.x
 The buffer contains all threads max and we need to take the max of all of them (reduction tree)
+
+# 20 : 2D convolution
+Easier to create output cols and rows in solve so we use it for block per grid and idx verification too
