@@ -98,3 +98,9 @@ The buffer contains all threads max and we need to take the max of all of them (
 
 # 20 : 2D convolution
 Easier to create output cols and rows in solve so we use it for block per grid and idx verification too
+
+# 21 : Dot product
+Easier to split into 2 kernels : partial that do per share memory and global that agregates the rest. The rest is like for the max.
+
+# 22 : GEMM
+Close to simple matrix mutliplication except the __float2half and __half2float
