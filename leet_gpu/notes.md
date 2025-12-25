@@ -104,3 +104,6 @@ Easier to split into 2 kernels : partial that do per share memory and global tha
 
 # 22 : GEMM
 Close to simple matrix mutliplication except the __float2half and __half2float
+
+# 23 : sparse matrix / vector multiplication
+I could check in CPU only non 0 elements
